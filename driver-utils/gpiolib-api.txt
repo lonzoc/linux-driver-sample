@@ -1,0 +1,173 @@
+	Linux GPIO Library API
+==============================
+
+#include <linux/gpio.h>
+*以下API如无特别提示，则默认返回值0代表执行成功，负值代表出错
+
+0.Index
+=======
+	- 1.GPIO Request
+	- 2.GPIO 输入输出设置
+	- 3.API for resource managed device
+	- 4.Debug GPIO
+	- 4.Sample Code
+
+1.GPIO Request
+==============
+
+申请单个GPIO
+------------
+int gpio_request(unsigned gpio, const char *label)
+e.g.
+	r = gpio_request(24, "gpio-24");
+	if (r < 0)
+		return -EINVAL;
+
+
+申请单个GPIO，同时配置该GPIO
+----------------------------
+int gpio_request_one(unsigned gpio, unsigned long flags, const char *label)
+e.g.
+	r = gpio_request_one(25, GPIOF_DIR_IN | GPIOF_INIT_HIGH, "my-gpio");
+	if (r < 0)
+		return -EINVAL;
+与gpio_request不同的是，gpio_request_one允许用户通过flag参数申请并设置GPIO。
+flag可以是：gpio.h
+		GPIOF_OPEN_DRAIN
+		GPIOF_OPEN_SOURCE
+		GPIOF_DIR_IN
+		GPIOF_INIT_HIGH
+		GPIOF_EXPORT_CHANGEABLE
+
+
+申请一组GPIO
+------------
+int gpio_request_array(const struct gpio *array, size_t num)
+e.g.
+	const struct gpio[] = {
+		{
+			.gpio = 26,
+			.flag = 0,
+			.label = "gpio-clk",
+		}, {
+			.gpio = 27,
+			.flag = GPIOF_OPEN_DRAIN,
+			.label = "gpio-cc",
+		}
+	};
+	r = gpio_request_array(gpio, ARRAY_SIZE(gpio));
+	if (r < 0)
+		return r;
+
+对应的freeAPI
+-------------
+void gpio_free(unsigned gpio)
+gpio_free_array(const struct gpio *array, size_t num)
+
+
+2.GPIO输入输出设置
+==================
+
+读取GPIO电平状态
+int gpio_get_value(unsigned int gpio)
+
+设置GPIO电平状态hi/lo
+void gpio_set_value(unsigned int gpio, int value)
+
+设置GPIO为输入态
+int gpio_direction_input(unsigned gpio)
+
+设置gpio为输出态，同时设置GPIO的电平状态
+int gpio_direction_output(unsigned gpio, int value)
+
+设置GPIO的去抖参数，debounce的单位是ms
+int gpio_set_debounce(unsigned gpio, unsigned debounce)
+
+GPIO number至IRQ number的转换
+int gpio_to_irq(unsigned int gpio)
+
+IRQ number至GPIO number的转换
+int irq_to_gpio(unsigned int irq)
+
+判断GPIO是否是有效的
+bool gpio_is_valid(int number)
+true - GPIO有效
+flase - GPIO无效
+
+3.API for resource managed device
+=================================
+
+使用这些API申请的GPIO不需要调用者free，当driver与device detach的时候，GPIO将被
+自动free。调用者需要额外提供dev这个参数，除此以外，其他与以上描述的同名API用法一致。
+
+int devm_gpio_request(struct device *dev, unsigned gpio, const char *label);
+int devm_gpio_request_one(struct device *dev, unsigned gpio,
+					  unsigned long flags, const char *label);
+void devm_gpio_free(struct device *dev, unsigned int gpio);
+
+
+4.Debug GPIO
+============
+
+通过sysfs查看gpio状态
+	cat /sys/kernel/debug/gpio
+
+
+5.Sample Code
+=============
+
+```
+#include <linux/gpio.h>
+#include <linux/device.h>
+
+#define GPIO_SCL	15
+#define GPIO_SDA	16
+#define GPIO_RESET	17
+#define GPIO_IRQ	14
+
+static int gpio_sample(struct device *dev)
+{
+	int r, irq;
+
+-------------
+
+	r = devm_gpio_request_one(dev,
+			GPIO_SCL, GPIOF_INIT_HIGH, "scl");
+	if (r < 0)
+		return r;
+
+	r = devm_gpio_request_one(dev,
+			GPIO_SDA, GPIOF_INIT_HIGH, "sda");
+	if (r < 0)
+		return r;
+
+	r = devm_gpio_request(dev, GPIO_RESET, "reset");
+	if (r < 0)
+		return r;
+	gpio_direction_output(GPIO_RESET, 1);
+
+	r = devm_gpio_request_one(dev, GPIO_IRQ,
+			GPIOF_DRI_IN, "irq");
+	if (r < 0)
+		return r;
+
+	irq = gpio_to_irq(GPIO_IRQ);
+	printk("IRQ:%d", irq);
+
+	// you can request_irq here.
+
+	/* do hardware reset */
+	gpio_set_value(GPIO_RESET, 0);
+	udelay(10);
+	gpio_set_value(GPIO_RESET, 1);
+
+	return 0;
+}
+
+```
+
+
+
+
+
+

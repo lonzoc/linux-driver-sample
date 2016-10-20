@@ -1,0 +1,205 @@
+	Devicetree API for Device Driver
+==========================================
+
+#include <linux/of.h>
+
+0.Index
+=======
+	- 1.查找Devicetree节点
+	- 2.获取节点的属性和值
+	- 3.Sample Code
+
+
+1.查找Devicetree节点
+====================
+
+1.1使用compatible属性寻找节点
+-----------------------------
+
+以@from节点为起点，用@compatible字符串匹配各节点compatible属性的值，返回
+找到的devicetree节点。
+
+/**
+ *	of_find_compatible_node - Find a node based on type and one of the
+ *                                tokens in its "compatible" property
+ *	@from:	The node to start searching from or NULL, the node
+ *			you pass will not be searched, only the next one
+ *			will; typically, you pass what the previous call
+ *			returned. of_node_put() will be called on it
+ *	@type:	The type string to match "device_type" or NULL to ignore
+ *	@compatible	The string to match to one of the tokens in the device
+ *			"compatible" list.
+ *
+ *	Returns a node pointer with refcount incremented, use
+ *	of_node_put() on it when done.
+ */
+struct device_node *of_find_compatible_node(struct device_node *from,
+			const char *type, const char *compatible)
+
+Demo：
+
+```
+	struct device_node *of_node;
+
+	/* Searching from root node */
+	of_node = of_find_compatible_node(NULL, NULL, "vendor,chip");
+
+	/* Searching child node from an existing node */
+	struct device_node *parent = of_node; /* node that got from other code*/
+	of_node = of_find_compatible_node(parent, NULL, "vendor,chip");
+
+```
+
+1.2使用节点名称寻找
+------------------
+
+/**
+ *	of_find_node_by_name - Find a node by its "name" property
+ *	@from:	The node to start searching from or NULL, the node
+ *		you pass will not be searched, only the next one
+ *		will; typically, you pass what the previous call
+ *		returned. of_node_put() will be called on it
+ *	@name:	The name string to match against
+ *
+ *	Returns a node pointer with refcount incremented, use
+ *	of_node_put() on it when done.
+ */
+struct device_node *of_find_node_by_name(struct device_node *from,
+		const char *name)
+
+Demo:
+
+```
+	&i2c1 {
+		touchpanel {
+			property-a = <1>;
+			property-b = "string a";
+		};
+	};
+
+	struct device_node *of_node;
+	of_node = of_find_node_by_name(NULL, "touchpanel");
+```
+
+1.3使用phandle寻找节点
+----------------------
+
+/**
+ * of_find_node_by_phandle - Find a node given a phandle
+ * @handle:	phandle of the node to find
+ *
+ * Returns a node pointer with refcount incremented, use
+ * of_node_put() on it when done.
+ */
+struct device_node *of_find_node_by_phandle(phandle handle)
+
+
+1.4通过属性名称来寻找节点
+------------------------
+
+/**
+ *	of_find_node_with_property - Find a node which has a property with
+ *                                   the given name.
+ *	@from:		The node to start searching from or NULL, the node
+ *			you pass will not be searched, only the next one
+ *			will; typically, you pass what the previous call
+ *			returned. of_node_put() will be called on it
+ *	@prop_name:	The name of the property to look for.
+ *
+ *	Returns a node pointer with refcount incremented, use
+ *	of_node_put() on it when done.
+ */
+struct device_node *of_find_node_with_property(struct device_node *from,
+		const char *prop_name)
+
+
+2.获取节点的属性的值
+====================
+
+2.1读取整形数据
+---------------
+
+int of_property_read_u8(const struct device_node *np,
+		 const char *propname, u8 *out_value)
+
+int of_property_read_u16(const struct device_node *np,
+		const char *propname, u16 *out_value)
+
+int of_property_read_u32(const struct device_node *np,
+		const char *propname, u32 *out_value)
+
+int of_property_read_u64(const struct device_node *np,
+		const char *propname, u64 *out_value);
+
+
+2.2读取整型数组
+---------------
+
+int of_property_read_u8_array(const struct device_node *np,
+		const char *propname, u8 *out_values, size_t sz)
+
+int of_property_read_u16_array(const struct device_node *np,
+		const char *propname, u16 *out_values, size_t sz)
+
+int of_property_read_u32_array(const struct device_node *np,
+		const char *propname, u32 *out_values, size_t sz)
+
+
+2.3读取整型数组中某个索引位置的数据
+-----------------------------------
+
+static inline int of_property_read_u32_index(const struct device_node *np,
+		const char *propname, u32 index, u32 *out_value)
+
+2.4读取字符串数据
+-----------------
+
+int of_property_read_string(struct device_node *np,
+		const char *propname, const char **out_string);
+
+int of_property_read_string_index(struct device_node *np,
+		const char *propname, int index, const char **output);
+
+int of_property_match_string(struct device_node *np,
+		const char *propname, const char *string);
+
+int of_property_count_strings(struct device_node *np,
+		const char *propname);
+
+
+3.Sample Code
+============
+
+```
+#include <linux/of.h>
+
+static int samp_parse_dts(struct device *dev)
+{
+	struct device_node *of_node = dev->of_node;
+	const char *compatible = "vendor,x";
+	u32 val0;
+	u8 val1;
+	const char *string;
+
+	if (!of_node)
+		return -EINVAL;
+
+	if (!of_device_is_compatible(of_node, compatible))
+		return -ENODEV;
+
+	if (of_property_read_u32(of_node, "vendor,val0", &val0))
+		/* fail */
+		val0 = -1;
+
+	if (of_property_read_u8(of_node, "vendor,val0", &val1))
+		/* fail */
+		val1 = -1;
+
+	if (of_property_read_string(of_node, "vendor,str", &string)
+		string = NULL;
+
+	return 0;
+}
+
+```
+

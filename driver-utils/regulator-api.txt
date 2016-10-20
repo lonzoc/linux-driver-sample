@@ -1,0 +1,234 @@
+	Linux Regulator Consumer API
+=====================================
+
+API for device driver
+#include <linux/regulator/consumer.h>
+
+0.Index
+=======
+	- 1.Config Power supply in Devie Tree
+	- 2.在Driver使用Regulator
+	- 3.Sample Code
+
+
+1.Config Power supply in Device Tree
+====================================
+Power supply相关的配置位于DTS(Device tree source)中, 通常具有如下的格式：
+
+```
+samp-chip@c0 {
+	compatible = "samp-chip",
+	vdd-supply = <&pm8916_17>;
+	vio-supply = <&pm8916_31>;
+}
+```
+
+对于具体的外设而言，Power相关的属性由一个字符串加"-supply"组成，Regulator framework
+默认device的dt node中以"-supply"结尾的属性为Power相关的属性。
+
+xxx-supply属性的值是提供power的regulator，以Qcom8916平台为例，这些regulator定义在
+	kernel/arch/arm64/boot/dts/qcom/msm8916-regulator.dtsi
+文件中。发者应该参考实际硬件原理图来确定其具体的值。
+
+
+2.在Driver中使用Regulator
+=========================
+
+绝大多数driver会按如下flow使用regulator:
+	-> get regulator
+	-> set voltage, set optimun mode
+	-> enable regulator 
+	-> change voltage/load
+	-> disable regulator
+	-> put regulator
+
+
+Get/Put Regulator的引用
+-----------------------
+
+struct regulator *regulator_get(struct device *dev, const char *id);
+struct regulator *devm_regulator_get(struct device *dev, const char *id);
+struct regulator *regulator_get_exclusive(struct device *dev, const char *id);
+void regulator_put(struct regulator *regulator);
+void devm_regulator_put(struct regulator *regulator);
+
+以上API用于get/put具体device的regulator，get操作将会依据dev->of_node成员的值从
+device tree中获取regulator属性，所以请确保dev的of_node成员被正确赋值并且已经在dts
+中对应device的dt node中配置xxx-supply属性。
+
+- 参数id为需要获取的regulator的名称，即dts中"-supply"之前的字符串。
+- get函数调用成功则返回regulator指针，失败则返回NULL或错误码，应当使用
+IS_ERR_OR_NULL宏来判断get函数的返回值。
+
+Regulator默认可以被多个device共享的，如果不希望被其他device共享，可以使用
+regulator_get_exclusive()来获得对某个regulator的独占。
+
+开发者可以使用devm_开头的API，这样便不需要再关心regulator的资源释放问题，也不
+用显示调用put函数来释放对regulator的引用。内核会在device与driver detach的时候
+自动释放资源。
+
+
+Check Capability of Regulator
+-----------------------------
+
+判断Regulator是否能否调整电压，返回1代表能否调整，0代表不能调整
+int regulator_can_change_voltage(struct regulator *regulator);
+
+获得Regulator可调整的电压级数
+int regulator_count_voltages(struct regulator *regulator);
+
+获得指定级别对应的电压值
+int regulator_list_voltage(struct regulator *regulator, unsigned selector);
+selector不能超过由regulator_count_voltages返回的值。
+
+判断指定电压区间是否被Regulator支持，返回1代表支持，返回0代表不支持
+int regulator_is_supported_voltage(struct regulator *regulator,
+						   int min_uV, int max_uV);
+
+
+
+Set/Get Voltage of Regulator
+----------------------------
+
+设置Regulator的最大最小输出电压值
+int regulator_set_voltage(struct regulator *regulator, int min_uV, int max_uV);
+
+获取Regulator当前输出的电压值
+int regulator_get_voltage(struct regulator *regulator);
+
+
+Set/Get Current of Regulator
+----------------------------
+
+设置Regulator的最大最小输出电流值
+int regulator_set_current_limit(struct regulator *regulator, int min_uA, int max_uA);
+
+获取Regulator当前的电流输出值
+int regulator_get_current_limit(struct regulator *regulator);
+
+
+Set Optimum Mode
+----------------
+
+根据提供的load_uA，选址Regulator最高效的工作模式
+int regulator_set_optimum_mode(struct regulator *regulator, int load_uA);
+
+
+其它API
+-------
+
+unsigned int regulator_get_mode(struct regulator *regulator);
+
+/* regulator notifier block */
+int regulator_register_notifier(struct regulator *regulator,
+					      struct notifier_block *nb);
+int regulator_unregister_notifier(struct regulator *regulator,
+						struct notifier_block *nb);
+
+/* driver data - core doesn't touch */
+void *regulator_get_drvdata(struct regulator *regulator);
+void regulator_set_drvdata(struct regulator *regulator, void *data);
+
+
+3.Sample Code
+=============
+
+```
+dts:
+samp-chip@c0 {
+	compatible = "samp-chip",
+	vdd-supply = <&pm8916_17>;
+	vio-supply = <&pm8916_31>;
+}
+
+driver:
+#include <linux/regulator/consumer.h>
+
+#define VDD_REG	"vdd"
+#define VIO_REG "vio"
+
+#define VDD_VOLTAGE	3300000
+#define VIO_VOLTAGE	1800000
+#define VDD_LOAD	
+
+static struct regulator *vdd_reg;
+static struct regulator *vio_reg;
+
+static int samp_init_power(struct device *dev)
+{
+	int voltage_cnt;
+	int r;
+
+	if (!dev->of_node)
+		return -ENODEV;
+
+	/* get analog power supply*/
+	vdd_reg = devm_regulator_get(dev, VDD_REG);
+	if (IS_ERR_OR_NULL(vdd_reg))
+		return PTR_ERR(vdd_reg);
+
+	/* set output voltage */
+	if (regulator_set_voltage(vdd_reg,
+				VDD_VOLTAGE, VDD_VOLTAGE) < 0)
+		return -EINVAL;
+
+	/* get digital power supply */
+	vio_reg = devm_regulator_get(dev, VIO_REG);
+	if (IS_ERR_OR_NULL(vio_reg))
+		return PTR_ERR(vio_reg);
+
+	/* set output voltage */
+	if (regulator_set_voltage(vio_reg,
+				VIO_VOLTAGE, VIO_VOLTAGE) < 0)
+		return -EINVAL;
+
+	/* chose and set optimum  mode */
+	if (regulator_count_voltages(vdd_reg)) {
+		if (regulator_set_optimum_mode(vdd_reg, VDD_LOAD) < 0)
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int samp_entry(struct device *dev)
+{
+	int r;
+
+	/*
+	 * we use resource managed api (devm_ api) to
+	 * obtain regulator handle, so there is no need
+	 * to deal with cleaning work.
+	 * but if you use non-devm_ api like regulator_get(),
+	 * you need to call regulator_put explicitly.
+	 */
+	r = samp_init_power(dev);
+	if (r  < 0)
+		return r;
+
+	/*
+	 * most chip need two types of power supply, analog power and
+	 * digital power, the sequence to power on vdd_reg and vio_reg
+	 * should be strict to the power on/off timing described in
+	 * chip's datasheet
+	 */
+	r = regulator_enable(vdd_reg);
+	if (r < )
+		return r;
+	
+	udelay(100);
+	r = regulator_enable(vio_reg);
+	if (r < 0)
+		return r;
+	
+	return 0;
+}
+
+static int samp_exit(void)
+{
+	/* disable power supply when system shutdown */
+	regulator_disable(vio_reg);
+	regulator_disable(vdd_reg);
+}
+```
+

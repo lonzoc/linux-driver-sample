@@ -1,0 +1,230 @@
+	Linux Pinctrl Consumer API
+===================================
+
+API for consumer device driver
+#include <linux/pinctrl/consummer.h>
+
+
+0.Index
+=======
+	- 1.Pinctrl Device Tree
+	- 2.在Driver中使用Pinctrl
+	- 3.Pin脚常用配置
+	- 4.Sample Code
+
+
+1. Pinctrl Device Tree
+======================
+Pinctrl使用Device Tree来配置具体的Pinctrl的属性。如果你需要你driver中使用pinctrl
+来控制pin脚的属性，首先应该配置dts（device tree source file）。
+
+```
+samp-chip@c0 {
+	compatible = "samp-chip",
+	pinctrl-names = "pin-a-active", "pin-a-idle";
+	pinctrl-0 = <&pin-a-active-phandle>;
+	pinctrl-1 = <&pin-a-idle-phandle>;
+}
+```
+
+对于具体的外设而言，pinctrl dts由pinctrl-names属性以及pinctrl-n属性构成。pinctrl-names
+属性为字符串列表，用于命名pinctrl-n属性，此例中，“pin-a-active”用于命名pinctrl-0，
+“pin-a-idle”用于命名pinctrl-1。pinctrl-n属性的值为phandler，可理解为指针或引用，它指向
+实际的用于配置pin具体属性的节点。
+
+当然，pinctrl-names不是必须的，它只是为了方便driver通过name来查找具体的pinctrl-n属性。
+
+用于配置Pin脚具体属性的节点，以Qcom平台为例：
+kernel/arch/arm64/boot/dts/qcom/msm8916-pinctrl.dtsi
+
+```
+&soc {
+	tlmm_pinmux: pinctrl@1000000 {
+		...
+		...
+		/* Add new pin mux entry */
+		pin-a-mux-group {
+			qcom,pins = <&gp 22>, <&gp 23 >;
+			qcom,pins-func = <0>;
+			qcom,num-grp-pins = <2>;
+			label = "pin-a-mux-group";
+			pin-a-active-phandle: pin-a-active {
+				driver-strength = <20>; /*20mA*/
+				bias-pull-up;
+			};
+
+			pin-a-idle-phandle: pin-a-idle {
+				driver-strength = <2>; /*2mA>
+				bias-pull-down;
+			};
+		};
+	};
+};
+```
+
+支持的配置参数可以从
+kernel/Documentation/devicetree/bindings/pinctrl/pinctrl-bindings.txt:143
+查询。
+
+2.在Driver中使用Pinctrl
+=======================
+
+绝大多数driver会按如下flow使用pinctrl:
+	-> get pinctrl
+	-> lookup pin state
+	-> select pin state at one condition
+	-> select another pin state at another condition
+	-> put pinctrl
+
+
+获得具体设备的Pinctrl引用
+-------------------------
+struct pinctrl *pinctrl_get(struct device *dev);
+
+如果dev对应的dt node配置了pinctrl-n属性，则返回pinctrl指针，否则返回NULL或者errorno，
+调用者应当使用IS_ERR_OR_NULL来判断其返回值。
+
+
+释放对Pinctrl的引用
+-------------------
+void pinctrl_put(struct pinctrl *p);
+pinctrl_get调用增加了设备的pinctrl的引用计数，因此在驱动需要释放资源时，应当调用
+pinctrl_put来释放资源。
+
+
+Resource managed API
+--------------------
+struct pinctrl *devm_pinctrl_get(struct device *dev);
+void devm_pinctrl_put(struct pinctrl *p);
+当driver与device detach的时候pinctrl将会自动被释放。
+
+
+查找Pinctrl State
+-----------------
+struct pinctrl_state *pinctrl_lookup_state(struct pinctrl *p, const char *name);
+
+Pin State即dts中定义的pinctrl-n属性，每个pinctrl-n属性代表一个Pin脚的State，
+该API通过name来匹配查找Pin state，name会与pinctrl-names属性中的字符串逐个比对，
+并通过匹配成功时字符串的索引位置n来找到pinctrl-n。
+与pinctrl_get类似，应该使用IS_ERR_OR_NULL来判断其返回值。
+
+
+设置Pin State
+-------------
+int pinctrl_select_state(struct pinctrl *p, struct pinctrl_state *s);
+
+参数p即使用pinctrl_get得到的pinctrl pointer，参数s即使用pinctrl_lookup_state或者的
+pinctrl_state pointer。
+
+
+Pinctrl Helper API
+------------------
+
+struct pinctrl *devm_pinctrl_get_select(struct device *dev, const char *name)
+struct pinctrl *pinctrl_get_select(struct device *dev, const char *name)
+相当于pinctrl_get pinctrl_lookup_state pinctrl_select_state的组合。
+
+struct pinctrl *devm_pinctrl_get_select_default(struct device *dev)
+struct pinctrl *pinctrl_get_select_default(struct device *dev)
+Get并select默认的pin state。
+默认的Pin state使用字符串“default”来匹配pinctrl-names并查找pinctrl-n。
+
+
+3.Pin脚常用的配置
+=================
+kernel/Documentation/devicetree/bindings/pinctrl
+
+bias-disable		- disable any pin bias
+bias-high-impedance	- high impedance mode ("third-state", "floating")
+bias-bus-hold		- latch weakly
+bias-pull-up		- pull up the pin
+bias-pull-down		- pull down the pin
+bias-pull-pin-default	- use pin-default pull state
+drive-push-pull		- drive actively high and low
+drive-open-drain	- drive with open drain
+drive-open-source	- drive with open source
+drive-strength		- sink or source at most X mA
+input-enable		- enable input on pin (no effect on output)
+input-disable		- disable input on pin (no effect on output)
+input-schmitt-enable	- enable schmitt-trigger mode
+input-schmitt-disable	- disable schmitt-trigger mode
+input-debounce		- debounce mode with debound time X
+low-power-enable	- enable low power mode
+low-power-disable	- disable low power mode
+output-low		- set the pin to output mode with low level
+output-high		- set the pin to output mode with high level
+slew-rate		- set the slew rate
+
+
+4.Sample Code
+=============
+```
+dts:
+samp-chip@3d{
+	compatible = "samp-chip";
+	pinctrl-names = "default", "samp-active", "samp-suspend";
+	pinctrl-0 = <&pin-x-default>; /*default*/
+	pinctrl-1 = <&pin-x-active>; /*samp-active*/
+	pinctrl-2 = <&pin-x-suspend>; /*samp-suspend*/
+};
+
+driver:
+#include <linux/pinctrl/consumer.h>
+
+#define PINSTA_ACTIVE	"samp-active"
+#define PINSTA_SUSPEND	"samp-suspend"
+
+struct samp_pinctrl {
+	struct pinctrl *pinctrl;
+	struct pinctrl_state *active_sta;
+	struct pinctrl_state *suspend_sta;
+};
+
+static int samp_pinctrl_init(struct device *dev, struct samp_pinctrl *samp_pctrl)
+{
+	struct pinctrl *pctrl;
+	struct pinctrl_state *psta;
+	
+	pctrl = devm_pinctrl_get_select_default(dev);
+	if (IS_ERR_OR_NULL(pctrl))
+		return PTR_ERR(pctrl);		
+	samp_pctrl->pinctrl = pctrl;
+	/*
+	 * euqals to:
+	 * pinctrl = devm_pinctrl_get(dev);
+	 * default_sta = pinctrl_lookup_state(pinctrl, "default");
+	 * pinctrl_select_state(pinctrl, default_sta);
+	 */
+	
+	psta = pinctrl_lookup_state(pctrl, PINSTA_ACTIVE);
+	if (IS_ERR_OR_NULL(psta))
+		return PTR_ERR(psta);
+	samp_pctrl->active_sta = psta;
+
+	psta = pinctrl_lookup_state(pctrl, PINSTA_SUSPEND);
+	if (IS_ERR_OR_NULL(psta))
+		return PTR_ERR(psta);
+	samp_pctrl->suspend = psta;
+	
+	return 0;
+}
+
+static int samp_init(struct device *dev)
+{
+	struct samp_pinctrl samp_pctrl;
+	int r;
+
+	r = samp_pinctrl_init(dev, &samp_pctrl);
+	if (r < 0)
+		return r;
+
+	/*select active pin state*/
+	r = pinctrl_select_state(samp_pctrl->pinctrl,
+			samp_pctrl->active_sta);
+	if (r < 0)
+		return r;
+
+	return 0;
+}
+
+```

@@ -1,0 +1,165 @@
+	Linux Interrupt API
+=============================
+
+#include <linux/interrupt.h>
+
+0.Index
+=======
+	- 1.Request IRQ
+	- 2.enable/disable IRQ
+	- 3.使IRQ成为Wakeup Source
+	- 4.Sample Code
+
+1.Request IRQ
+=============
+
+申请线程化的IRQ
+---------------
+int __must_check
+request_threaded_irq(unsigned int irq, irq_handler_t handler,
+		irq_handler_t thread_fn, unsigned long flags,
+		const char *name, void *dev);
+参数依次为：
+		irq - irq number
+		handler - hardware irq handler, 硬中断,在中断上下文执行
+		thread_fn - threaded irq handler，执行中断实际任务的线程函数，在线程
+				上下文执行
+		flags - 中断标志，触发方式，执行方式等
+		name - IRQ的名字
+		dev - 可以为任何参数，该参数将会传递到handler/thread_fn中，可用于保存
+				中断函数中需要使用的变量/结构体的指针。
+
+Note：
+- 调用这个函数将向中断子系统申请中断资源，同时使能该IRQ Line。
+- handler/thread_fn允许同时存在，也允许只存在其中一个，但不允许两个都为NULL。
+- handler函数(top half)在中断上下文执行，应保证快速执行完毕，中断上下文不允许
+	有sleep/task schedule等会导致主动放弃CPU操作，不能使用mutex/semaphore等有可能导致阻塞的API
+- 中断上下文不允许访问用户空间内存
+- 耗时的操作应该放到thread_fn中(bottom half)执行，如果handler存在，当handler
+	返回IRQ_WAKE_THREAD时，将唤醒thread_fn所在的线程。如果handler不存在，则默认当
+	中断触发后，唤醒thread_fn所在的线程。
+- 中断bottom half可以通过workqueue或者自己创建kthread来实现，它们本质上都为
+	kernel thread，但通过request_threaded_irq创建的线程具有更高的优先级和实时性
+	较高的调度策略，因此如果你对bottom half的实时性有要求，应该优先使用request_threaded_irq.
+	使用threaded irq没有softirq、tasklet的限制，且拥有较高的执行优先级，推荐使用。
+
+
+申请IRQ
+-------
+int __must_check
+request_irq(unsigned int irq, irq_handler_t handler,
+		unsigned long flags, const char *name, void *dev)
+
+参数意义同request_threaded_irq
+
+
+释放IRQ
+-------
+void free_irq(unsigned int irq, void *dev_id);
+
+
+Resouce Managed API
+-------------------
+相比不带资源管理的API，如下API多了一个参数struce device *dev,位于第一个参数位置，
+调用者不用关心irq的释放操作，当driver与device detach时，irq将被自动释放掉。
+devm_request_threaded_irq
+devm_request_irq
+devm_free_irq
+
+
+2.enable/disable IRQ
+====================
+
+Disable IRQ
+-----------
+void disable_irq_nosync(unsigned int irq);
+disable irq后立即返回，不等待中断执行完毕。
+
+void disable_irq(unsigned int irq);
+disale irq并且同步等待中断执行完毕才返回。
+因此不能在中断top half中执行disable_irq，否则将会导致死锁。
+
+Enable IRQ
+----------
+void enable_irq(unsigned int irq);
+enable_irq并没有同步与非同步的区分，当desc->irq_data.chip->bus_lock and desc->chip->bus_sync_unlock
+为NULL的时候，可以在中断上下文中调用enable_irq。
+
+enable/disable irq必须成对使用，例如调用两次disable_irq后，irq将处于disabled状态直到
+调用两次enable_irq。
+
+
+3.使IRQ成为Wakeup Source
+========================
+
+int enable_irq_wake(unsigned int irq);
+调用enable_irq_wake后该irq将一直处于wake状态，当系统进入deep sleep状态时，其他irq将会
+被屏蔽掉，但此irq仍然可以被触发和处理（可以wake up 主控）
+
+int disable_irq_wake(unsigned int irq);
+
+
+
+4.Sample Code
+=============
+
+```
+#include <linux/interrupt.h>
+#define IRQ_NUM	13
+
+static irqreturn_t hard_irq_handler(int irq, void *dev_id)
+{
+	/*
+	 * irq context, limited operations.
+	 * do emergency work and quit as soon as possible
+	 */
+	return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t thread_irq_handler(int irq, void *dev_id)
+{
+	/*
+	 * do the real work
+	 * you can use sleep api, mutex/semaphore api,
+	 * you can access user space memory here,
+	 */
+	return IRQ_HANDLED;
+}
+
+static int irq_sample(struct device *dev)
+{
+	int irq = IRQ_NUM;
+	int r;
+
+	r = devm_request_threaded_irq(dev, irq, hard_irq_handler,
+			thread_irq_handler,
+			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+			"samp",
+			NULL);
+	if (r < 0)
+		return r;
+	// at this point, irq is requested and is enabled.
+	return 0;
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
