@@ -1,0 +1,247 @@
+Linux Kernel Locks API
+==================================
+
+Kernel的一些机制可以用来解决并发与竞态问题，保证共享资源的互斥访问。
+这些机制的实现原理不同，因而使用场景有所区别和限制。本文中列举的是
+一般驱动常用的机制。
+
+
+0.Index
+	- 1.信号量semaphore
+	- 2.完成量completion
+	- 3.自旋锁spinlock
+	- 4.互斥锁mutex
+	- 5.原子变量atomic
+
+
+1.信号量semaphore
+=================
+<linux/semaphore.h>
+
+信号量本质上是一个整数值,进入临界区，信号量减一，如果信号量大于0则可以继
+续操作,退出临界区信号量加一,互斥体(mutex)也属于信号量的一种。
+
+当获取信号(down操作)的操作无法完成时，down操作内部将会将当前task sleep，阻塞
+至有信号量可以获取时才返回。
+
+因为semaphore有可能导致线程block和schedule，因此不能用于中断上下文和原子上下文。
+
+
+动态初始化信号量
+	void sema_init(struct semaphore *sem，int val）
+静态声明互斥信号量
+	DECLARE_MUTEX(name） DECLARE_MUTEX_LOCKED(name)
+动态的初始化互斥信号量
+	void init_MUTEX(struct semaphore *sem）
+	void init_MUTEX_LOCKED(struct semaphore *sem)
+获得信号量
+	void down（struct semaphore *sem）  阻塞式
+	int down_interruptible（struct semaphore *sem）  阻塞式但可中断
+	int down_trylock（struct semaphore *sem）  不阻塞，不可用立即返回非零值
+释放信号量
+	void up（struct semaphore *sem）
+
+读写型信号量
+	void init_rwsem(struct rw_semaphore *sem）
+	down_read()
+	up_read()
+	down_write()
+	up_write()
+	读写信号量允许多线程并发read，但当有write操作时，所有read操作将会阻塞。
+	读写信号量适用于数据消费者的数量远大于数据生产者的数量的应用场景。
+
+2.完成量completion
+==================
+#include <linux/completion.h>
+
+完成量是一种轻量级机制多线程同步机制，它允许一个线程告诉另一个线程某个工作
+已经完成。
+
+完成量实现机制采用的线程block和schedule，有可能导致线程sleep，
+因此不能用于中断上下文和原子上下文。
+
+初始化
+	DECLARE_CPMPLETION(xxx_completion) 静态创建
+	struct completion xxx_completion；
+	init_completion（&xxx_completion） 动态创建
+等待completion
+	void wait_for_completion(struct completion *c)
+	int wait_for_completion_interruptible(struct completion *x)
+	unsigned long wait_for_completion_timeout(struct completion *x,
+		   unsigned long timeout);
+	long wait_for_completion_interruptible_timeout(
+			struct completion *x, unsigned long timeout);
+	bool try_wait_for_completion(struct completion *x);
+
+触发完成
+	void complete（struct completion *c)
+	void complete_all(struct completion *c)
+
+判断是否还有waiter
+	bool completion_done(struct completion *x)
+
+快速重新初始化一个completion结构
+	INIT_COMPLETION(struct completion *c) 
+
+
+3.自旋锁spinlock
+================
+#include <linux/spinlock.h>
+
+一个自旋锁是一个互斥设备，它只有两个值： 锁定和解锁。
+自旋锁保护的临界区内属于原子上下文，因此不能在临界区内调用任何可能导致
+sleep/schedule/block的API。
+
+自旋锁采用忙等待的方法实现，忙等待期间CPU无法执行其他任务，因此长时间持
+有自选锁将影响系统效率，在持有自旋锁期间应该尽快完成对共享资源的操作然后
+释放自旋锁。如果需要长时间占有共享资源，建议使用其他类型的锁。
+
+使用spinlock时，按照共享资源存在的位置，有如下限制：
+-------------------------
+自旋锁使用规则
+-------------------------
+(1)共享资源仅在进程上下文
+	spin_lock/spin_unlock
+	或者其他衍生的API也可以使用，但没有必要。
+
+(2)共享资源在进程上下文和中断上下文中
+	在进程上下文中使用
+		spin_lock_irqsave/spin_unlock_irqrestore或者
+		spin_lock_irq/spin_unlock_irq
+	在中断上下文中, 若没有其他中断使用该共享资源则使用
+        spin_lock/spin_unlock
+	在中断上下文中，若有其他中断使用该共享资源则使用
+		spin_lock_irqsave/spin_unlock_irqrestore或者
+		spin_lock_irq/spin_unlock_irq
+
+(3)共享资源在进程上下文和软中断上下文
+	sortirq和tasklet/hrtimer均属于软中断上下文
+	在进程上下文中使用
+		spin_lock_bh/spin_unlock_bh
+	在软中断上下文中使用
+		spin_lock/spin_unlock
+
+(4)共享资源在进程上下文软件中断上下文和中断上下文中都存在
+	在进程上下文中使用
+		spin_lock_irqsave/spin_unlock_irqrestore or
+		spin_lock_irq/spin_unlock_irq
+	在软中断上下文中使用
+		spin_lock_irqsave/spin_unlock_irqrestore or
+		spin_lock/spin_unlock
+	在中断上下文中, 若没有其他中断使用该共享资源则使用
+        spin_lock/spin_unlock
+	在中断上下文中，若有其他中断使用该共享资源则使用
+		spin_lock_irqsave/spin_unlock_irqrestore或者
+		spin_lock_irq/spin_unlock_irq
+	
+自旋锁API
+---------
+初始化  
+	spin_lock_t xxx_lock = SPIN_UNLOCKED；
+动态初始化
+	void spin_lock_init(spinlock_t *lock)
+
+锁定函数
+	void spin_lock(spinlock_t *lock）
+	void spin_lock_irq(spinlock_t *lock)
+	void spin_lock_irqsave(spinlock_t *lock, unsigned long flag)
+	void spin_lock_bh(spinlock_t  *lock) 获得自旋锁之前禁止软件中断，硬件中断保持打开
+
+释放自旋锁
+	void spin_unlock(spinlock_t *lock）
+	void spin_unlock_irq(spinlock_t *lock)
+	void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flag)
+	void spin_unlock_bh(spinlock_t  *lock) 
+
+读写自旋锁
+#include <linux/rwlock.h>
+	rwlock_t xxx_rwlock;
+	rwlock_init(&xxx_rwlock)
+	or
+	rwlock_t xxx_rwlock = RW_LOCK_UNLOCKED;
+
+获得读锁
+	void read_lock(rwlock_t *lock)
+	void read_lock_irqsave(rwlock_t *lock ,unsigned long flag)
+	void read_lock_irq(rwlock_t *lock)
+	void read_lock_bh(rwlock_t *lock)
+
+释放读锁
+	void read_unlock(rwlock_t *lock)
+	void read_unlock_irqrestore(rwlock_t *lock ,unsigned long flag)
+	void read_unlock_irq(rwlock_t *lock)
+	void read_unlock_bh(rwlock_t *lock) 
+
+写锁获得与释放把read替换为write
+
+
+4.互斥锁mutex
+=============
+#include <linux/mutex.h>
+
+互斥锁是一种特殊的信号量，它只有两个状态:锁定与解锁，可以把它看成值只有0和1的
+信号量。互斥锁在内核驱动中非常常见，其使用方法比较简答。
+
+静态初始化
+	DEFINE_MUTEX(a)	定义了一个全局的mutex变量a
+	struct mutex a = __MUTEX_INITIALIZER(a);
+
+动态初始化
+	struct mutex a;
+	mutex_init(a);
+
+获得和释放互斥锁
+	void mutex_lock(struct mutex *lock);
+	int mutex_lock_interruptible(struct mutex *lock);
+	int mutex_lock_killable(struct mutex *lock);
+	int mutex_trylock(struct mutex *lock);
+	void mutex_unlock(struct mutex *lock);
+
+因为mutex有可能导致线程block和schedule，因此不能用于中断上下文和原子上下文。
+
+
+5.原子操作atomic
+================
+#include <linux/atomic.h>
+
+设置原子变量的值
+	atomic_t v = ATOMIC_INIT(0)
+	void atomic_set(atomic_t *v,int i)
+
+获取原子变量的值
+	int atomic_read(atomic_t *v）
+
+原子变量的运算
+	void atomic_add(int i，atomic_t *v)
+	void atomic_sub(int i，atomic_t *v)
+	void atomic_inc(atomic_t *v)
+	void atomic_dec(atomic_t *v) 
+
+操作并测试 原子值为0则返回ture ，否则返回false
+	int atomic_inc_and_test（atomic_t *v)
+	int atomic_dec_and_test（atomic_t *v)
+	int atomic_sub_and_test（int i，atomic_t *v)
+
+操作结束后，返回新值
+	int atomic_add_return（int i，atomic_t *v)
+	int atomic_sub_return（int i，atomic_t *v)
+	int atomic_inc_return（atomic_t *v)
+	int atomic_dec_return（atomic_t *v)
+
+原子量复杂交换操作
+	int atomic_cmpxchg（atomic_t *v, int old, int new)
+	当v == old时，将new赋值给v，并返回操作之前v的值。
+
+	int atomic_add_unless(atomic_t *v, int a, int u)
+	当v == u时，将a add到v，并返回0
+	当v != u时，返回1
+
+
+位原子操作
+	void set_bit(nr ,void *addr)
+	void clear_bit(nr,void *addr)
+	void change_bit(nr,void *addr)
+	void test_and_set_bit(nr ,void *addr)
+	void test_and_clear_bit(nr,void *addr)
+	void test_and_change_bit(nr,void *addr)
+

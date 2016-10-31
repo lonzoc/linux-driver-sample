@@ -88,6 +88,16 @@ enable_irq并没有同步与非同步的区分，当desc->irq_data.chip->bus_loc
 enable/disable irq必须成对使用，例如调用两次disable_irq后，irq将处于disabled状态直到
 调用两次enable_irq。
 
+全局中断开关
+------------
+local_irq_disable()      禁止中断
+local_irq_enable()		 打开中断	
+local_irq_save(flag)     禁止中断并保存中断寄存器
+local_irq_restore(flags) 打开中断，恢复寄存器
+local_bh_disable()       仅禁止中断底半部中断
+local_bh_enable()        打开
+注意：不要长时间屏蔽中断
+
 
 3.使IRQ成为Wakeup Source
 ========================
