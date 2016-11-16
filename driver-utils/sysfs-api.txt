@@ -1,0 +1,61 @@
+	Linux Sysfs APIs
+============================
+
+APIs for device driver
+#incluede <linux/sysfs.h>
+
+像其他文件系统一样，sysfs文件系统也有directory、file、link这些成员。
+
+
+
+0.Index
+=======
+
+1.Create Sysfs Driectory
+========================
+
+int sysfs_create_dir(struct kobject *kobj);
+
+调用该函数将为kobj在sysfs文件系统中创建一个目录项，如果kobj->parent不为空，则将
+在kobj->parent对应的目录下创建子目录；如果kobj->parent为NULL，则将在sysfs的根
+路径下创建目录。
+
+2.Create Sysfs File
+===================
+
+sysfs file是在用户空间sysfs文件系统下看到的虚拟文件，其实在Kernel中它对应的是
+sysfs attribute，创建sysfs file的步骤稍微复杂一点，通常你需要编写show方法和store
+方法。
+
+Device Attribute
+----------------
+
+Show方法签名：
+static ssize_t samp_dev_show(struct device *dev, struct device_attribute *attr,
+		char *buf);
+
+Store方法签名：
+static ssize_t samp_dev_store(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count);
+
+创建device attribute:
+static DEVICE_ATTR(samp_dev, 0660, samp_dev_show, samp_dev_store);
+
+此宏展开为
+static struct device_attribute samp_dev = __ATTR(samp_dev, 0660, samp_dev_show,
+		samp_dev_store);
+
+
+__ATTR宏展开为
+#define __ATTR(_name,_mode,_show,_store) { \
+	.attr = {.name = __stringify(_name), .mode = _mode },	\
+	.show	= _show,					\
+	.store	= _store,					\
+}
+
+
+
+
+
+
+
