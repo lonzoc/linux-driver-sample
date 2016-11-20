@@ -10,7 +10,7 @@ API for device driver
     - 2.创建work并提交到workqueue
     - 3.创建delayed_work并提交到workqueue
     - 4.创建和管理workqueue
-    5.Sample Code
+    - 5.Sample Code
 
 
 1.Workqueue与Work
