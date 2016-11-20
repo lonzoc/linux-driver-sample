@@ -1,0 +1,215 @@
+    Linux Workqueue API
+==============================
+
+API for device driver
+#include <linux/workqueue.h>
+
+0.Index
+=======
+    - 1.Workqueue与Work
+    - 2.创建work并提交到workqueue
+    - 3.创建delayed_work并提交到workqueue
+    - 4.创建和管理workqueue
+    5.Sample Code
+
+
+1.Workqueue与Work
+=================
+
+核心数据结构
+-----------
+struct workqueue_struct;
+struct work_struct;
+struct delayed_work;
+
+workqueue_struct是工作队列结构体，代表着一个调度具体工作的管理者，是一个或者多个内核线
+程(kthread)。
+work_struct代表具体的工作，内核其他模块可以新建一个work然后提交的某个workqueue中等待调度。
+
+Global workqueue
+----------------
+内核创建了几个公用的workqueue：
+    struct workqueue_struct *system_wq;
+    struct workqueue_struct *system_long_wq;
+    struct workqueue_struct *system_unbound_wq;
+    struct workqueue_struct *system_freezable_wq;
+
+公用的workqueue允许任何work提交到其上，workqueue上的work是依次被调度的，如果公用的workqueue
+上的负载比较大，提交的任务并不能保证及时的执行。
+对于非重复执行work而言，提交到公用的workqueue上是比较好的方式。但对于需要重复执行且对调度
+的及时性有要求的，创新单独的workqueue然后吧work提交到其上是比较好的做法。
+
+Work提交到workqueue的规则
+------------------------
+- Workqueue在被创建时，会在每个cpu上创建一个kthread。当然可以创建single thread workqueue。
+- Work将默认被提交到当前cpu上的workqueue。当然也可以显示指定要提交的cpu。
+- 每个cpu上的待调度执行的work按提交先后顺序一次执行。
+
+
+2.创建work并提交到workqueue
+==========================
+
+静态创建
+-------
+使用宏DECLARE_WORK创建work
+static DECLARE_WORK(new_wk, new_wk_func);
+
+使用宏DECLARE_DELAYED_WORK创建delayed_work
+static DECLARE_DELAYED_WORK(new_wk, new_wk_func);
+
+
+动态创建
+-------
+struct work_struct wk_a;
+struct delayed_work dwk;
+INIT_WORK(&wk_a, wk_a_func);
+INIT_DELAYED_WORK((&dwk, wk_k_func);
+
+struct work_struct wk_b;
+struct delayed_work dwk1;
+INIT_WORK_ONSTACK(&wk_b, wk_b_func);
+INIT_DELAYED_WORK_ONSTACK(&dwk1, wk_s_func);
+
+
+提交work到workqueue
+-------------------
+
+提交work到公用workqueue system_wq
+static inline bool schedule_work(struct work_struct *work);
+static inline bool schedule_work_on(int cpu, struct work_struct *work);
+    - 返回true代表提交成功。
+    - 返回false代表此work已经在system_wq上了。
+    - 可通过schedule_work_on指定将work提交到某个cpu。
+
+
+提交work到指定的workqueue
+bool queue_work(struct workqueue_struct *wq, struct work_struct *work);
+bool queue_work_on(int cpu, struct workqueue_struct *wq, struct work_struct *work);
+    - 返回true代表提交成功。
+    - 返回false代表此work已经在wq上了。
+    - 可通过queue_work_on指定将work提交到某个cpu。
+
+
+等待work执行完毕
+bool flush_work(struct work_struct *work);
+    - 阻塞等待work执行完毕后再返回。
+    - 返回true，work执行完毕了。
+    - 返回false，work本身就处于IDLE状态。
+
+
+Cancel work
+bool cancel_work_sync(struct work_struct *work);
+    - 阻塞等待work取消或者等待其执行完毕。
+    - 返回true带包work is pending。
+
+
+3.创建delayed_work并提交到workqueue
+==================================
+
+静态创建
+-------
+
+使用宏DECLARE_DELAYED_WORK创建delayed_work
+static DECLARE_DELAYED_WORK(new_wk, new_wk_func);
+
+
+动态创建
+-------
+struct delayed_work dwk;
+INIT_DELAYED_WORK((&dwk, wk_k_func);
+
+struct delayed_work dwk1;
+INIT_DELAYED_WORK_ONSTACK(&dwk1, wk_s_func);
+
+
+提交delayed_work到workqueue
+---------------------------
+
+提交delayed_work到公用workqueue system_wq
+bool schedule_delayed_work(struct delayed_work *dwork, unsigned long delay);
+bool schedule_delayed_work_on(int cpu, struct delayed_work *dwork, unsigned long delay);
+    - 返回true代表提交成功。
+    - 返回false代表此work已经在system_wq上了。
+    - 可通过schedule_delayed_work_on指定将work提交到某个cpu。
+
+
+提交delayed_work到指定的workqueue
+bool queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dwork,
+        unsigned long delay);
+bool queue_delayed_work_on(int cpu, struct workqueue_struct *wq,
+		struct delayed_work *work, unsigned long delay);
+    - 返回true代表提交成功。
+    - 返回false代表此work已经在wq上了。
+    - 可通过queue_delayed_work_on指定将work提交到某个cpu。
+    - delay的单位是jiffies，可以使用msec_to_jiffies or usec_to_jiffies等来转换时间。
+
+
+等待delayed_work执行完毕
+bool flush_delayed_work(struct delayed_work *dwork);
+    - 阻塞等待work执行完毕后再返回。
+    - 返回true，work执行完毕了。
+    - 返回false，work本身就处于IDLE状态。
+
+
+Cancel delayed_work
+bool cancel_delayed_work(struct delayed_work *dwork);
+    - 阻塞等待work取消或者等待其执行完毕。
+    - 返回true带包work is pending。
+
+
+4.创建和管理workqueue
+====================
+
+使用如下两个宏快速创建workqueue
+create_workqueue(name);
+create_singlethread_workqueue(name);
+    - 创建workqueue将在每个cpu上创建一个kthread，用来执行work。
+    - 默认状态下work会被提交到当前cpu上执行。
+    - 可以用create_singlethread_workqueue创建单线程的workqueue，以节省系统资源。
+    - 返回非NULL代表创建成功，返回NULL代表创建失败。
+
+
+等待workqueue上的work执行完毕
+void flush_workqueue(struct workqueue_struct *wq);
+extern void flush_scheduled_work(void);
+    - flush_scheduled_work其实时flush system_wq
+
+
+销毁workqueue
+void destroy_workqueue(struct workqueue_struct *wq);
+
+
+5.Sample Code
+=============
+
+```
+static struct workqueue_struct *samp_wq;
+static struct work_struct samp_work;
+static DECLARE_DELAYED_WORK(samp_dwork, samp_work_func);
+
+static void samp_work_func(struct work_struct *work)
+{
+    printk(KERN_DEBUG "samp work is executed");
+}
+
+void samp_init(void)
+{
+    samp_wq = create_workqueue("samp_wq");
+    if (samp_wq == NULL)
+        return;
+
+    INIT_WORK(&samp_work, samp_work_func);
+
+    /* queue right now *
+    queue_work(&samp_wq, &samp_work);
+
+    /* execute after 100ms later, and submit to system_wq */
+    schedule_delayed_work(&samp_dwork, msec_to_jiffies(100));
+
+    queue_delayed_work(&samp_wq, &samp_dwork, msec_to_jiffies(200));
+
+    flush_workqueue(&samp_wq);
+    destroy_workqueue(&samp_wq);
+}
+
+```

@@ -12,7 +12,7 @@ APIs for device driver
 	- 2.Create Sysfs File
 		- 2.1Device Attribute
 		- 2.2Class Attribute
-		- 2.4Customized Attribute
+		- 2.3Customized Attribute
 	- 3.Create Sysfs Link
 	- 4.Create Sysfs Group
 	- 5.Create Sysfs Bin File
