@@ -1,0 +1,102 @@
+    Linux Procfs APIs
+=============================
+
+APIs for device driver
+#include <linux/proc_fs.h>
+
+Procfs是Linux world中古老的内存文件系统，Proc一词源于process，早期procfs主要用于向
+Linux userspace提供process的各种信息。而目前procfs下的内容比较混乱，很多driver都将
+在procfs中创建文件，输出自己关注的信息。
+
+新的device driver应当将device的属性信息创建到sysfs中，调试信息创建到debugfs中。
+
+
+0.Index
+=======
+        - 1.创建proc_fs directory
+        - 2.创建proc_fs file
+        - 3.移除procfs
+        - 4.Sample Code
+
+
+1.创建proc_fs directory
+=======================
+
+struct proc_dir_entry *proc_symlink(const char *name,
+		struct proc_dir_entry *parent, const char *dest);
+struct proc_dir_entry *proc_mkdir(const char *, struct proc_dir_entry *);
+struct proc_dir_entry *proc_mkdir_data(const char *, umode_t,
+					      struct proc_dir_entry *, void *);
+struct proc_dir_entry *proc_mkdir_mode(const char *, umode_t,
+					      struct proc_dir_entry *);
+    - 如果parent == NULL，则将创建到procfs的root路径下
+    - mode是文件或文件夹的读写权限
+
+2.创建proc_fs file
+==================
+
+extern struct proc_dir_entry *proc_create_data(const char *, umode_t,
+        struct proc_dir_entry *,
+        const struct file_operations *,
+        void *);
+
+static inline struct proc_dir_entry *proc_create(
+        const char *name, umode_t mode,
+         struct proc_dir_entry *parent,
+        const struct file_operations *proc_fops);
+
+
+3.移除procfs
+============
+
+extern void proc_remove(struct proc_dir_entry *);
+extern void remove_proc_entry(const char *, struct proc_dir_entry *);
+extern int remove_proc_subtree(const char *, struct proc_dir_entry *);
+
+
+
+4.Sample Code
+=============
+
+```
+#include <linux/proc_fs.h>
+
+static proc_dir_entry *samp_procfs_dir;
+
+
+ssize_t samp_procfs_read(struct file *filp, char __user *buffer, size_t count,
+        loff_t *ppos)
+{
+        return simple_read_form_buffer(buffer, count, ppos, "hello world",
+                sizeof("hello world"));
+}
+
+
+ssize_t samp_procfs_write(struct file *filp, const char __user *buffer,
+        size_t count, loff_t *ppos)
+{
+        return count;
+}
+
+static struct file_operations samp_fops = {
+        .owner = THIS_MODULE,
+        .read = samp_procfs_read,
+        .write = samp_procfs_write
+};
+
+static void samp_procfs_init(void)
+{
+        /* create dir in root of profs */
+        samp_procfs_dir = proc_mkdir("samps", NULL);
+        if (samp_procfs_dir == NULL)
+                return;
+
+        if (proc_create("samp_file1", S_IRUSE | S_IWUSR, samp_procfs_dir,
+                &samp_fops) == NULL) {
+                printk(KERN_ERR "Failed to create samp procfs file\n");        
+        }
+}
+
+```
+
+
