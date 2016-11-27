@@ -1,0 +1,75 @@
+    Linux Waitqueue APIs
+================================
+
+APIs for device driver
+#include <linux/wait.h>
+
+Waitqueue有很多API，用法众多，这里仅列举driver开发中最常用的用法。
+
+0.Index
+=======
+
+
+1.Wait Queue数据结构
+===================
+
+等待队列中有两个重要的数据结构：
+    - 等待队列头(wait_queue_head_t)
+    - 等待队列(wait_queue_t)
+
+wait_queue等效一个需要等待的任务，而等待队列头是多个等待任务的容器。
+当某个等待条件成立时，可以wakeup所有等待队列头上的等待任务。
+
+```
+struct __wait_queue_head {
+	spinlock_t lock;
+	struct list_head task_list;
+};
+typedef struct __wait_queue_head wait_queue_head_t;
+
+struct __wait_queue {
+	unsigned int flags;
+	void *private;
+	wait_queue_func_t func;
+	struct list_head task_list;
+};
+typedef struct __wait_queue wait_queue_t;
+```
+
+2.创建wait queue head
+=====================
+
+静态创建
+-------
+
+static DECLARE_WAIT_QUEUE_HEAD(samp_wq);
+static DECLARE_WAIT_QUEUE_HEAD_ONSTACK(samp_wq);
+
+动态初始化
+---------
+
+wait_queue_head_t samp_wq;
+init_waitqueue_head(&samp_wq);
+
+
+3.创建等待任务
+=============
+
+在driver中调用如下API，指定wait_queue_head以及等待条件(condition)
+wait_event(wq, condition)
+wait_event_timeout(wq, condition, timeout)
+wait_event_interruptible(wq, condition)
+wait_event_interruptible_timeout(wq, condition, timeout)
+    - 以上函数return 0代表condition已经为true
+    - _interruptible类的函数有可能return -ERESTARTSYS，代表被signal中断
+    - _timeout _hrtimeout类函数有可能return -ETIME，代表wait超时
+
+
+
+
+
+
+
+
+
+
