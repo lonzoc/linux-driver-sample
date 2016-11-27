@@ -39,6 +39,9 @@ typedef struct __wait_queue wait_queue_t;
 2.创建wait queue head
 =====================
 
+等待任务的功能基础侍wait queue head，所有的等待任务都sleep on the wait queue head，
+并wait someone wake it up。
+
 静态创建
 -------
 
@@ -64,7 +67,63 @@ wait_event_interruptible_timeout(wq, condition, timeout)
     - _interruptible类的函数有可能return -ERESTARTSYS，代表被signal中断
     - _timeout _hrtimeout类函数有可能return -ETIME，代表wait超时
 
+4.唤醒等待队列
+=============
 
+
+#define wake_up(x)
+#define wake_up_nr(x, nr)
+#define wake_up_all(x)
+#define wake_up_locked(x)
+#define wake_up_all_locked(x)
+    - wake_up 仅唤醒一个等待的theaad
+    - wake_up_nr 唤醒多个等待的thread
+    - wake_up_all 唤醒所有等待的thread
+    - wake_up_all_locked 需要调用者自己加锁
+
+
+#define wake_up_interruptible(x)
+#define wake_up_interruptible_nr(x, nr)
+#define wake_up_interruptible_all(x)
+#define wake_up_interruptible_sync(x)
+    - interruptible 类的API代表等待可以被信号中断
+
+
+5.Sample Code
+=============
+
+```
+#include <wait.h>
+static DECLARE_WAIT_QUEUE_HEAD(samp_wq_head);
+static int samp_condition = 0;
+
+// thread 1:
+void task1 (void)
+{
+    int ret;
+
+    ret = wait_event_interruptible_timeout(&samp_wq_head, samp_condition == 1,
+            msecs_to_jiffies(100));
+    if (ret == -ETIME)
+        printk(KERN_ERR "task 1 timeout\n");
+    else if (ret == -ERESTARTSYS)
+        printk(KERN_ERR "task is interruped\n");
+    else if (samp_condition != 1)
+        printk(KERN_ERR "task condition not meet\n");
+}
+
+
+// thread 2:
+void task2(void)
+{
+    int ret;
+
+    condition = 1;
+
+    wake_up_interruptible(&samp_wq_head);
+}
+
+```
 
 
 
