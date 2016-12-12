@@ -40,12 +40,11 @@ struct samp_device {
  * return: 0 - read ok, < 0 - i2c transter error
 */
 static int samp_i2c_read(struct samp_device *dev, u32 addr,
-	u8 *data, u32 len)
+		u8 *data, u32 len)
 {
 	struct i2c_client *client = to_i2c_client(dev->dev);
-	u32  trans_len = 0, pos = 0;
-	u8 buf[64], addr_buf[2];
-	int retry, r = 0;
+	u8 addr_buf[2], *buf;
+	int r = 0;
 	struct i2c_msg msgs[] = {
 		{
 			.addr = client->addr,
@@ -58,48 +57,37 @@ static int samp_i2c_read(struct samp_device *dev, u32 addr,
 		}
 	};
 
-	if (likely(len < sizeof(buf))) {
-		msgs[1].buf = &buf[0];
+	/* 
+	 * length of one message should not exceed the max
+	 * length supported by the i2c master.
+	 * You should check the source of i2c master to
+	 * get the max supported length, or split the length
+	 * to relatively small size for each meaasge and do
+	 * i2c_transfer in the looper
+	 */
+	buf = kzalloc(len, GFP_KERNEL);
+	if (buf == NULL)
+		return -ENOMEM;
+
+	/*we assume that device use big-endian format */
+	msgs[0].buf[0] = (addr >> 8) & 0xFF;
+	msgs[0].buf[1] = addr & 0xFF;
+	msgs[1].buf = buf;
+	msgs[1].len = len;
+
+	/* 
+	 * i2c transfer may fail, you can add a looper
+	 * here to retry the transmission
+	 */
+	r = i2c_transfer(client->adapter, msgs, 2);
+	if (likely(r == 2)) {
+		memcpy(&data[0], msgs[1].buf, len);
+		r = 0;
 	} else {
-		msgs[1].buf = kzalloc(I2C_MAX_TRANSFER_SIZE < len?
-				I2C_MAX_TRANSFER_SIZE : len, GFP_KERNEL);
-		if (msgs[1].buf == NULL) {
-			ts_err("Malloc failed");
-			return -ENOMEM;
-		}
+		r = -EIO;
 	}
 
-	while (pos != len) {
-		if (unlikely(len - pos > I2C_MAX_TRANSFER_SIZE))
-			trans_len = I2C_MAX_TRANSFER_SIZE;
-		else
-			trans_len = len - pos;
-
-		msgs[0].buf[0] = (addr >> 8) & 0xFF;
-		msgs[0].buf[1] = addr & 0xFF;
-		msgs[1].len = trans_len;
-
-		for (retry = 0; retry < I2C_RETRY_TIMES; retry++) {
-			if (likely(i2c_transfer(client->adapter, msgs, 2) == 2)) {
-				memcpy(&data[pos], msgs[1].buf, trans_len);
-				pos += trans_len;
-				addr += trans_len;
-				break;
-			}
-			pr_info("I2c read retry[%d]:0x%x\n", retry + 1, addr);
-			msleep(20);
-		}
-		if (unlikely(retry == I2C_RETRY_TIMES)) {
-			pr_err("I2c read failed,dev:%02x,reg:%04x,size:%u\n",
-					client->addr, addr, len);
-			r = -EIO;
-			goto read_exit;
-		}
-	}
-
-read_exit:
-	if (unlikely(len > sizeof(buf)))
-		kfree(msgs[1].buf);
+	kfree(buf);
 	return r;
 }
 
@@ -123,50 +111,34 @@ static int samp_i2c_write(struct samp_device *dev, u32 addr,
 		.flags = !I2C_M_RD,
 	};
 
-	if (likely(len + I2C_ADDR_LENGTH < sizeof(buf))) {
-		msg.buf = &buf[0];
-	} else {
-		msg.buf = kmalloc(I2C_MAX_TRANSFER_SIZE < len +
-				I2C_ADDR_LENGTH ? I2C_MAX_TRANSFER_SIZE :
-				len + I2C_ADDR_LENGTH,
-				GFP_KERNEL);
-		if (msg.buf == NULL) {
-			pr_err("Malloc failed\n");
-			return -ENOMEM;
-		}
-	}
+	/* 
+	 * length of one message should not exceed the max
+	 * length supported by the i2c master.
+	 * You should check the source of i2c master to
+	 * get the max supported length, or split the length
+	 * to relatively small size for each meaasge and do
+	 * i2c_transfer in the looper
+	 */
+	msg.buf = kmalloc(len, GFP_KERNEL);
+	if (msg.buf == NULL)
+		return -ENOMEM;
 
-	while (pos != len) {
-		if (unlikely(len - pos > I2C_MAX_TRANSFER_SIZE - I2C_ADDR_LENGTH))
-			trans_len = I2C_MAX_TRANSFER_SIZE - I2C_ADDR_LENGTH;
-		else
-			trans_len = len - pos;
+	msg.buf[0] = (unsigned char)((address >> 8) & 0xFF);
+	msg.buf[1] = (unsigned char)(address & 0xFF);
+	msg.len = trans_len + 2;
+	memcpy(&msg.buf[2], &data[pos], trans_len);
 
-		msg.buf[0] = (unsigned char)((address >> 8) & 0xFF);
-		msg.buf[1] = (unsigned char)(address & 0xFF);
-		msg.len = trans_len + 2;
-		memcpy(&msg.buf[2], &data[pos], trans_len);
+	/* 
+	 * i2c transfer may fail, you can add a looper
+	 * here to retry the transmission
+	 */
+	r = i2c_transfer(client->adapter, &msg, 1);
+	if (r != 1)
+		r = -EIO;
+	else
+		r = 0; /* no error */
 
-		for (retry = 0; retry < I2C_RETRY_TIMES; retry++) {
-			if (likely(i2c_transfer(client->adapter, &msg, 1) == 1)) {
-				pos += trans_len;
-				addr += trans_len;
-				break;
-			}
-			pr_info("I2c write retry[%d]\n", retry + 1);
-			msleep(20);
-		}
-		if (unlikely(retry == I2C_RETRY_TIMES)) {
-			pr_err("I2c write failed,dev:%02x,reg:%04x,size:%u\n",
-					client->addr, addr, len);
-			r = -EIO;
-			goto write_exit;
-		}
-	}
-
-write_exit:
-	if (likely(len + I2C_ADDR_LENGTH > sizeof(buf)))
-		kfree(msg.buf);
+	kfree(msg.buf);
 	return r;
 }
 
