@@ -1,4 +1,4 @@
-* Linux Sensor Drivers *
+# Linux Sensor Drivers #
 
 Sensor Driver在Linux中属于一类特殊的input device。这类Sensor能测量设备的各种
 物理信息例如温度、加速度、姿态等，并通过input subsystem上报事件供用户空间程序
